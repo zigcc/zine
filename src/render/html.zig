@@ -17,6 +17,34 @@ const HtmlSafe = @import("superhtml").HtmlSafe;
 
 const log = std.log.scoped(.render);
 
+fn renderSlug(gpa: std.mem.Allocator, node: supermd.Node, w: *Writer) !void {
+    _ = gpa;
+    const text = try node.renderPlaintext();
+
+    var last_was_dash = false;
+    var first = true;
+    for (text) |byte| {
+        // Allow alphanumeric ASCII and all non-ASCII (UTF-8) characters
+        const is_alphanumeric = std.ascii.isAlphanumeric(byte);
+        const is_non_ascii = byte >= 128;
+
+        if (is_alphanumeric or is_non_ascii) {
+            if (last_was_dash and !first) try w.writeByte('-');
+            if (is_alphanumeric) {
+                try w.writeByte(std.ascii.toLower(byte));
+            } else {
+                // Pass UTF-8 bytes through as-is
+                try w.writeByte(byte);
+            }
+            last_was_dash = false;
+            first = false;
+        } else {
+            // ASCII symbols and whitespace become dashes
+            last_was_dash = true;
+        }
+    }
+}
+
 pub fn html(
     gpa: std.mem.Allocator,
     ctx: *const context.Template,
@@ -191,7 +219,7 @@ pub fn html(
                         else => {},
                         .heading => {
                             try w.print("<h{}", .{node.headingLevel()});
-                            try w.print(" id=\"{s}\"", .{d.id.?});
+                            if (d.id) |id| try w.print(" id=\"{s}\"", .{id});
                             if (d.attrs) |attrs| {
                                 try w.print(" class=\"", .{});
                                 for (attrs) |attr| try w.print("{s} ", .{attr});
@@ -207,7 +235,7 @@ pub fn html(
                             }
                             open_div = true;
                             try w.print("<div", .{});
-                            try w.print(" id=\"{s}\"", .{d.id.?});
+                            if (d.id) |id| try w.print(" id=\"{s}\"", .{id});
                             if (d.attrs) |attrs| {
                                 try w.print(" class=\"", .{});
                                 for (attrs) |attr| try w.print("{s} ", .{attr});
@@ -218,7 +246,10 @@ pub fn html(
                         },
                     };
 
-                    try w.print("<h{}>", .{node.headingLevel()});
+                    try w.print("<h{}", .{node.headingLevel()});
+                    try w.writeAll(" id=\"");
+                    try renderSlug(gpa, node, w);
+                    try w.writeAll("\">");
                 },
                 .exit => {
                     if (node.parent()) |p| if (p.getDirective()) |pd| switch (pd.kind) {
@@ -759,7 +790,7 @@ fn renderLink(
     }
 }
 
-pub fn htmlToc(ast: Ast, w: *Writer) !void {
+pub fn htmlToc(gpa: std.mem.Allocator, ast: Ast, w: *Writer) !void {
     try w.print("<ul>\n", .{});
     var lvl: i32 = 1;
     var first_item = true;
@@ -777,21 +808,21 @@ pub fn htmlToc(ast: Ast, w: *Writer) !void {
                 try w.print("<ul><li>\n", .{});
             }
 
-            try tocRenderHeading(n, w, true);
+            try tocRenderHeading(gpa, n, w, true);
         } else if (new_lvl < lvl) {
             try w.print("</li>", .{});
             while (new_lvl < lvl) : (lvl -= 1) {
                 try w.print("</ul></li>", .{});
             }
             try w.print("<li>", .{});
-            try tocRenderHeading(n, w, true);
+            try tocRenderHeading(gpa, n, w, true);
         } else {
             if (first_item) {
                 try w.print("<li>", .{});
-                try tocRenderHeading(n, w, true);
+                try tocRenderHeading(gpa, n, w, true);
             } else {
                 try w.print("</li><li>", .{});
-                try tocRenderHeading(n, w, true);
+                try tocRenderHeading(gpa, n, w, true);
             }
         }
     }
@@ -803,7 +834,7 @@ pub fn htmlToc(ast: Ast, w: *Writer) !void {
     try w.print("</ul>", .{});
 }
 
-fn tocRenderHeading(heading: supermd.Node, w: *Writer, link: bool) !void {
+fn tocRenderHeading(gpa: std.mem.Allocator, heading: supermd.Node, w: *Writer, link: bool) !void {
     var it = Iter.init(heading);
     while (it.next()) |ev| {
         const node = ev.node;
@@ -814,18 +845,22 @@ fn tocRenderHeading(heading: supermd.Node, w: *Writer, link: bool) !void {
             ),
             .HEADING => switch (ev.dir) {
                 .enter => {
-                    const dir = node.getDirective() orelse continue;
-                    if (dir.id) |id| {
-                        std.debug.assert(id.len > 0);
-                        std.debug.assert(std.mem.trim(u8, id, "\t\n\r ").len > 0);
-                        if (link) try w.print("<a href=\"#{s}\">", .{id});
+                    if (link) {
+                        try w.writeAll("<a href=\"#");
+                        if (node.getDirective()) |d| {
+                            if (d.id) |id| {
+                                try w.writeAll(id);
+                            } else {
+                                try renderSlug(gpa, node, w);
+                            }
+                        } else {
+                            try renderSlug(gpa, node, w);
+                        }
+                        try w.writeAll("\">");
                     }
                 },
                 .exit => {
-                    const dir = node.getDirective() orelse continue;
-                    if (dir.id != null) {
-                        if (link) try w.print("</a>", .{});
-                    }
+                    if (link) try w.print("</a>", .{});
                 },
             },
             .TEXT => switch (ev.dir) {
@@ -861,7 +896,7 @@ fn tocRenderHeading(heading: supermd.Node, w: *Writer, link: bool) !void {
     }
 }
 
-pub fn htmlTocDetails(ast: Ast, w: *Writer) !void {
+pub fn htmlTocDetails(gpa: std.mem.Allocator, ast: Ast, w: *Writer) !void {
     var lvl: i32 = 1;
     var first_item = true;
     var node: ?supermd.Node = ast.md.root.firstChild();
@@ -880,7 +915,7 @@ pub fn htmlTocDetails(ast: Ast, w: *Writer) !void {
             }
 
             // if (lvl == 1) try w.print("<summary>\n", .{});
-            try tocRenderHeading(n, w, true);
+            try tocRenderHeading(gpa, n, w, true);
             // if (lvl == 1) try w.print("</summary>\n", .{});
         } else if (new_lvl < lvl) {
             try w.print("</li>", .{});
@@ -889,30 +924,30 @@ pub fn htmlTocDetails(ast: Ast, w: *Writer) !void {
             }
             if (lvl == 1) {
                 try w.print("</details><details><summary>", .{});
-                try tocRenderHeading(n, w, false);
+                try tocRenderHeading(gpa, n, w, false);
                 try w.print("</summary>", .{});
             } else {
                 try w.print("<li>", .{});
-                try tocRenderHeading(n, w, true);
+                try tocRenderHeading(gpa, n, w, true);
             }
         } else {
             if (first_item) {
                 if (lvl == 1) {
                     try w.print("<details><summary>", .{});
-                    try tocRenderHeading(n, w, false);
+                    try tocRenderHeading(gpa, n, w, false);
                     try w.print("</summary>", .{});
                 } else {
                     try w.print("<li>", .{});
-                    try tocRenderHeading(n, w, true);
+                    try tocRenderHeading(gpa, n, w, true);
                 }
             } else {
                 if (lvl == 1) {
                     try w.print("</details><details><summary>", .{});
-                    try tocRenderHeading(n, w, false);
+                    try tocRenderHeading(gpa, n, w, false);
                     try w.print("</summary>", .{});
                 } else {
                     try w.print("</li><li>", .{});
-                    try tocRenderHeading(n, w, true);
+                    try tocRenderHeading(gpa, n, w, true);
                 }
             }
         }
