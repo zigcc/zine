@@ -2,10 +2,21 @@
 <h3 align="center"><em>Fast, Scalable, Flexible Static Site Generator (SSG)</em></h3>
 <p align="center">Zine is pronounced like in <a href="https://en.wikipedia.org/wiki/Zine">fan<em>zine</em></a></a>.</p>
 
+## ⚠️ Warning
+
+This is a fork of [kristoff-it/zine](https://github.com/kristoff-it/zine), with a focus on rapid iteration.
+
+---
+
+> The following content is from the original repository.
+
 ## Development Status
 Zine is still a young project, not yet at feature parity with more popular
 alternatives (e.g. Hugo), but it's perfectly able to handle a personal website
 with a blog.
+
+## Download
+Pre-built binaries are available on the [Releases](https://github.com/zigcc/zine/releases) page.
 
 ## Getting Started
 Go to https://zine-ssg.io to get started.
